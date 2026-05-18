@@ -105,7 +105,7 @@ class SpyreCausalLM(nn.Module):
             self.parallel_config
         )
 
-        if self.config.model_type in {"llama", "granite", "granitemoehybrid", "granite41"}:
+        if self.config.model_type in {"llama", "granite", "granitemoehybrid", "granite41", "mistral"}:
             self.kv_cache_specs["num_layers"] = self.config.num_hidden_layers
             self.kv_cache_specs["head_dim"] = getattr(
                 self.fms_model.config,
