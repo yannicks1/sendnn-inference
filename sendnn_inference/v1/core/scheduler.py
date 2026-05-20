@@ -640,6 +640,8 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         """Update the scheduler stats from the base scheduler.
         In sendnn-inference the last chunk is always recomputed, even though
         the space is not duplicated.
+        Spyre does not support cross-request MM cache reuse today, so MM cache
+        hit reporting is forced to 0.0%.
         """
         base_stats = super().make_stats(*args, **kwargs)
 
@@ -647,5 +649,10 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             base_stats.prefix_cache_stats.hits = self.adjust_hit(
                 base_stats.prefix_cache_stats.queries, base_stats.prefix_cache_stats.hits
             )
+
+        if base_stats is not None:
+            mm_cache_stats = getattr(base_stats, "mm_cache_stats", None)
+            if mm_cache_stats is not None:
+                mm_cache_stats.hits = 0
 
         return base_stats
