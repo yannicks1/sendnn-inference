@@ -424,7 +424,7 @@ def test_middle_chunk_recomputation_with_padding(
         left_padding={"0": 0},
     )
 
-    # Skip chunk 0 and run chunk 1 of request 1
+    # Skip chunks 0 & 1 and run chunk 2 of request 1
     model_runner_output_3 = pc_model_runner.execute_new_request(request=request2.request)
     pc_model_runner.assert_block_tables_and_slot_mappings(
         block_tables=[[0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]],
