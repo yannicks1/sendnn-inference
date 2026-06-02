@@ -11,7 +11,7 @@ __version__ = importlib.metadata.version("sendnn_inference")
 
 def register():
     """Register the Spyre platform."""
-    # vLLM v0.19.1 doesn't know GraniteSWAForCausalLM, so remap it to GraniteForCausalLM.
+    # vLLM doesn't know GraniteSWAForCausalLM, so remap it to GraniteForCausalLM.
     # model_type stays "granite_swa" for routing. FMS loading bypasses this via explicit arch.
     try:
         from transformers import AutoConfig
