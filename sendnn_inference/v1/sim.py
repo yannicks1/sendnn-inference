@@ -225,13 +225,10 @@ class SimState:
 
         # ITLs between successive emitted tokens (size = num_generation_tokens - 1)
         itls = [
-            token_emit_times[i] - token_emit_times[i - 1]
-            for i in range(1, num_generation_tokens)
+            token_emit_times[i] - token_emit_times[i - 1] for i in range(1, num_generation_tokens)
         ]
 
-        completion = (
-            rec.virtual_completion if rec.virtual_completion is not None else last_token_t
-        )
+        completion = rec.virtual_completion if rec.virtual_completion is not None else last_token_t
         e2e_latency = completion - rec.virtual_arrival
         # In sim mode the scheduler picks a request immediately when it arrives,
         # so there is no front-of-queue wait; report 0 for bench parity.
