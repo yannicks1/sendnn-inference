@@ -266,7 +266,13 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         new_prefill = new_prefill_candidates[0]
         # If the prefix cache already covers chunk 0, no cap is needed: the
         # base scheduler will start from chunk i>=1, which has no padding.
+        # `get_computed_blocks` records into `prefix_cache_stats` as a side
+        # effect; the base scheduler calls it again, so toggle log_stats off
+        # here to avoid double-counting.
+        prev_log_stats = self.kv_cache_manager.log_stats
+        self.kv_cache_manager.log_stats = False
         _, prefix_len = self.kv_cache_manager.get_computed_blocks(new_prefill)
+        self.kv_cache_manager.log_stats = prev_log_stats
         if prefix_len > 0:
             return self.chunk_size
 
