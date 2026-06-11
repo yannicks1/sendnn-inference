@@ -519,8 +519,40 @@ class SpyreWorker(WorkerBase):
             finished_req_ids=set(),
             **_get_extra_args(),
         )
-        logger.info("[WARMUP] Deploying to device...")
+        logger.info("[WARMUP] Deploying to prefill device...")
         self.execute_model(scheduler_output)
+
+        # Mirror the prefill deploy with a decode deploy: ensure the compiled
+        # decode program is also installed on the device before runtime, so
+        # the first runtime decode does not pay a one-time deploy cost
+        # (observed as elevated ITL on the very first decoded token).
+        if envs_spyre.SENDNN_INFERENCE_DEPLOY_DECODE_AT_WARMUP:
+            decode_cached = CachedRequestData.make_empty()
+            decode_cached.req_ids = [deploy_req.req_id]
+            if len(deploy_req.prompt_token_ids) % SpyrePlatform.get_block_size() == 0:
+                decode_cached.new_block_ids = [self._gen_warmup_block_ids(1)]
+            else:
+                decode_cached.new_block_ids = [([],)]
+            decode_cached.new_token_ids = [
+                [
+                    valid_token_ids_tensor[
+                        torch.randint(0, len(valid_token_ids_tensor), (1,)).item()
+                    ]
+                ]
+            ]
+            decode_cached.num_computed_tokens = [prompt_len]
+
+            decode_scheduler_output = SchedulerOutput(
+                scheduled_new_reqs=[],
+                scheduled_cached_reqs=decode_cached,
+                num_scheduled_tokens={deploy_req.req_id: 1},
+                total_num_scheduled_tokens=1,
+                finished_req_ids=set(),
+                **_get_extra_args(),
+            )
+            logger.info("[WARMUP] Deploying decode to device...")
+            self.execute_model(decode_scheduler_output)
+
         self._cleanup_model_runner(request=[deploy_req])
 
         model_runner.complete_warmup()
