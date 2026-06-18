@@ -23,6 +23,7 @@ gap between two consecutive decode tokens widens whenever an intervening
 prefill of another request happens.
 """
 
+import contextlib
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -159,15 +160,23 @@ class SimState:
         self._lock = Lock()
         self._fp = None
 
-    def _ensure_file(self):
-        if self._fp is not None:
-            return
-        out_dir = Path(envs_spyre.SENDNN_INFERENCE_PERF_METRIC_LOGGING_DIR)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        path = out_dir / "sim_metrics.jsonl"
-        if path.exists():
-            path.unlink()
-        self._fp = path.open("a", buffering=1)
+    @contextlib.contextmanager
+    def _metrics_file(self):
+        """Yield the open sim_metrics.jsonl handle under `self._lock`.
+
+        Opens the file on first use (line-buffered, kept open for process
+        lifetime) and serialises concurrent writers. The lock is held for
+        the duration of the `with`, so callers don't need their own.
+        """
+        with self._lock:
+            if self._fp is None:
+                out_dir = Path(envs_spyre.SENDNN_INFERENCE_PERF_METRIC_LOGGING_DIR)
+                out_dir.mkdir(parents=True, exist_ok=True)
+                path = out_dir / "sim_metrics.jsonl"
+                if path.exists():
+                    path.unlink()
+                self._fp = path.open("a", buffering=1)
+            yield self._fp
 
     def has_record(self, req_id: str) -> bool:
         with self._lock:
@@ -268,10 +277,8 @@ class SimState:
             "mean_time_per_output_token_seconds": mean_tpot,
             "inter_token_latencies_seconds": itls,
         }
-        with self._lock:
-            self._ensure_file()
-            assert self._fp is not None
-            self._fp.write(json.dumps(record) + "\n")
+        with self._metrics_file() as fp:
+            fp.write(json.dumps(record) + "\n")
 
 
 _sim_state: SimState | None = None
