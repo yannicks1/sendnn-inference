@@ -723,24 +723,17 @@ class ChunkedPrefillModelRunner(
         # Initialize performance metric logger for tracking embedding times
         self.perf_logger = create_perf_metric_logger(rank=rank)
 
-        self._sim_state = None
-        self._mock_causal_lm = None
-        if envs_spyre.SENDNN_INFERENCE_SIM_MODE:
-            from sendnn_inference.v1.sim import MockSpyreCausalLM, get_sim_state
-
-            self._sim_state = get_sim_state()
-            self._mock_causal_lm = MockSpyreCausalLM
-
     def load_model(self) -> None:
-        if envs_spyre.SENDNN_INFERENCE_SIM_MODE:
-            logger.info("SENDNN_INFERENCE_SIM_MODE=1: loading MockSpyreCausalLM (no-op forward)")
-            assert self._mock_causal_lm is not None
-            self._model = self._mock_causal_lm(vllm_config=self.vllm_config)  # ty: ignore[invalid-assignment]
-        else:
-            self._model = SpyreCausalLM(
-                vllm_config=self.vllm_config,
-                rank=self.rank,
-            )
+        self._model = SpyreCausalLM(
+            vllm_config=self.vllm_config,
+            rank=self.rank,
+        )
+
+    def _after_forward_step(self, *args, **kwargs) -> None:
+        """Hook for SimulatedChunkedPrefillModelRunner. No-op by default."""
+
+    def _on_request_finished(self, *args, **kwargs) -> None:
+        """Hook for SimulatedChunkedPrefillModelRunner. No-op by default."""
 
     @property
     def vocab_size(self) -> int:
@@ -1474,15 +1467,8 @@ class ChunkedPrefillModelRunner(
 
         if scheduler_output.finished_req_ids:
             for req_id in scheduler_output.finished_req_ids:
-                if self._sim_state is not None:
-                    finished_state = self.requests.get(req_id)
-                    num_prompt_tokens = (
-                        len(finished_state.prompt_token_ids) if finished_state is not None else 0
-                    )
-                    self._sim_state.finalize_and_write(
-                        req_id=req_id,
-                        num_prompt_tokens=num_prompt_tokens,
-                    )
+                # no-op here (hook only for sim mode)
+                self._on_request_finished(req_id)
                 self.input_batch.remove_request(req_id)
                 # TODO: Processing multiple removals at once can break alignment
                 # of logitprocs. Refactor so that we can batch removals to the
@@ -1579,14 +1565,8 @@ class ChunkedPrefillModelRunner(
                 masks=None,
                 is_prompt=model_input.is_prompt,
             )
-
-        if self._sim_state is not None:
-            self._sim_state.record_step(
-                is_prompt=model_input.is_prompt,
-                prefill_ms=envs_spyre.SENDNN_INFERENCE_SIM_PREFILL_MS,
-                decode_ms=envs_spyre.SENDNN_INFERENCE_SIM_DECODE_MS,
-                scheduler_output=scheduler_output,
-            )
+        # no-op here (hook only for sim mode)
+        self._after_forward_step(model_input, scheduler_output)
 
         # If the prompt is being prefilled we don't have to sample
         # and generate a new token.

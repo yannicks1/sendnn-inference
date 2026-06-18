@@ -31,16 +31,20 @@ from threading import Lock
 from types import SimpleNamespace
 
 import torch
+from transformers import AutoTokenizer
 from vllm.config import VllmConfig
 from vllm.forward_context import get_forward_context
 from vllm.v1.core.sched.output import SchedulerOutput
 from vllm.v1.outputs import SamplerOutput
 from vllm.v1.sample.metadata import SamplingMetadata
 from vllm.v1.sample.sampler import Sampler
-from transformers import AutoTokenizer
 
 import sendnn_inference.envs as envs_spyre
 from sendnn_inference.model_executor.model_loader.spyre import SpyreAttentionMetadata
+from sendnn_inference.v1.worker.spyre_model_runner import (
+    ChunkedPrefillModelRunner,
+    SamplingForwardInputs,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -278,3 +282,49 @@ def get_sim_state() -> SimState:
     if _sim_state is None:
         _sim_state = SimState()
     return _sim_state
+
+
+# ---------------------------------------------------------------------------
+# Simulated chunked-prefill runner
+# ---------------------------------------------------------------------------
+
+
+class SimulatedChunkedPrefillModelRunner(ChunkedPrefillModelRunner):
+    """Drop-in for ChunkedPrefillModelRunner that mocks the forward pass
+    and records virtual timings instead of touching real hardware."""
+
+    def __init__(
+        self,
+        vllm_config: VllmConfig,
+        is_driver_worker: bool,
+        rank: int,
+    ):
+        super().__init__(vllm_config=vllm_config, is_driver_worker=is_driver_worker, rank=rank)
+        self._sim_state = get_sim_state()
+        # Lazy initialization: after load_model.
+        self._model: MockSpyreCausalLM | None = None
+
+    def load_model(self) -> None:
+        self._model = MockSpyreCausalLM(vllm_config=self.vllm_config)
+
+    def _after_forward_step(
+        self,
+        model_input: SamplingForwardInputs,
+        scheduler_output: SchedulerOutput,
+    ) -> None:
+        self._sim_state.record_step(
+            is_prompt=model_input.is_prompt,
+            prefill_ms=envs_spyre.SENDNN_INFERENCE_SIM_PREFILL_MS,
+            decode_ms=envs_spyre.SENDNN_INFERENCE_SIM_DECODE_MS,
+            scheduler_output=scheduler_output,
+        )
+
+    def _on_request_finished(self, req_id: str) -> None:
+        finished_state = self.requests.get(req_id)
+        num_prompt_tokens = (
+            len(finished_state.prompt_token_ids) if finished_state is not None else 0
+        )
+        self._sim_state.finalize_and_write(
+            req_id=req_id,
+            num_prompt_tokens=num_prompt_tokens,
+        )
