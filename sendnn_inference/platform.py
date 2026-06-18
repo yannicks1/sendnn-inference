@@ -272,9 +272,14 @@ class SpyrePlatform(Platform):
             os.environ["FLEX_DEVICE"] = "COMPILE"
 
         if is_decoder:
-            scheduler_config.scheduler_cls = (
-                "sendnn_inference.v1.core.scheduler.ChunkedPrefillSpyreScheduler"
-            )
+            if envs_spyre.SENDNN_INFERENCE_SIM_MODE:
+                scheduler_config.scheduler_cls = (
+                    "sendnn_inference.v1.sim.SimulatedChunkedPrefillSpyreScheduler"
+                )
+            else:
+                scheduler_config.scheduler_cls = (
+                    "sendnn_inference.v1.core.scheduler.ChunkedPrefillSpyreScheduler"
+                )
 
             if (
                 vllm_config.model_config.quantization

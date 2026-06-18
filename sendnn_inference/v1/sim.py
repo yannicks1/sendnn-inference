@@ -37,11 +37,13 @@ from vllm.config import VllmConfig
 from vllm.forward_context import get_forward_context
 from vllm.v1.core.sched.output import SchedulerOutput
 from vllm.v1.outputs import SamplerOutput
+from vllm.v1.request import Request
 from vllm.v1.sample.metadata import SamplingMetadata
 from vllm.v1.sample.sampler import Sampler
 
 import sendnn_inference.envs as envs_spyre
 from sendnn_inference.model_executor.model_loader.spyre import SpyreAttentionMetadata
+from sendnn_inference.v1.core.scheduler import ChunkedPrefillSpyreScheduler
 from sendnn_inference.v1.worker.spyre_model_runner import (
     ChunkedPrefillModelRunner,
     SamplingForwardInputs,
@@ -182,6 +184,19 @@ class SimState:
         with self._lock:
             return req_id in self._records
 
+    def mark_arrival(self, req_id: str) -> None:
+        """Stamp the current virtual time as the request's arrival.
+
+        Called by the scheduler when a request first enters the wait queue,
+        so subsequent queue-wait time gets attributed to the request's TTFT.
+        Idempotent: a request that's already been marked is left alone.
+        """
+        with self._lock:
+            if req_id not in self._records:
+                self._records[req_id] = _RequestSimRecord(
+                    virtual_arrival=self.virtual_clock_seconds
+                )
+
     def record_step(
         self,
         is_prompt: bool,
@@ -195,15 +210,12 @@ class SimState:
         cached_req_ids = list(scheduler_output.scheduled_cached_reqs.req_ids)
 
         with self._lock:
-            for rid in new_req_ids:
-                if rid not in self._records:
-                    self._records[rid] = _RequestSimRecord(
-                        virtual_arrival=self.virtual_clock_seconds
-                    )
-
             for rid in new_req_ids + cached_req_ids:
                 rec = self._records.get(rid)
                 if rec is None:
+                    # Most reqs already have a record (created on entry to the
+                    # scheduler via mark_arrival). This fallback covers
+                    # warmup-style synthetic reqs that bypass the scheduler.
                     rec = _RequestSimRecord(virtual_arrival=self.virtual_clock_seconds)
                     self._records[rid] = rec
                 if is_prompt:
@@ -335,3 +347,21 @@ class SimulatedChunkedPrefillModelRunner(ChunkedPrefillModelRunner):
             req_id=req_id,
             num_prompt_tokens=num_prompt_tokens,
         )
+
+
+# ---------------------------------------------------------------------------
+# Simulated chunked-prefill scheduler
+# ---------------------------------------------------------------------------
+
+
+class SimulatedChunkedPrefillSpyreScheduler(ChunkedPrefillSpyreScheduler):
+    """Subclass of the chunked-prefill scheduler that stamps each new
+    request's virtual arrival time as it enters the wait queue. Without this
+    hook, sim TTFT would only cover compute (last-prefill-end minus
+    first-prefill-start) and miss the queueing delay before the scheduler
+    actually picks the request up for prefill.
+    """
+
+    def add_request(self, request: Request) -> None:
+        get_sim_state().mark_arrival(request.request_id)
+        super().add_request(request)
