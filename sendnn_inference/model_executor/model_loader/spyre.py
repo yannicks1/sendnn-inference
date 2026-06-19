@@ -197,7 +197,7 @@ class SpyreCausalLM(nn.Module):
                 # granite_swa (which resolves to GraniteSWAForCausalLM)
                 self.fms_model = get_model(
                     architecture="granite_swa",
-                    variant="8b",  # FMS registers the 3B config under "8b" — naming error in the FMS branch
+                    variant="3b",
                     model_path=model_path,
                     source="hf",
                     distributed_strategy=distributed_strategy,
