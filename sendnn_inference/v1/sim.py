@@ -151,7 +151,6 @@ class _RequestSimRecord:
     virtual_arrival: float
     last_prefill_end: float | None = None
     decode_step_ends: list[float] = field(default_factory=list)
-    virtual_completion: float | None = None
     num_prefill_chunks: int = 0
 
 
@@ -200,11 +199,13 @@ class SimState:
     def record_step(
         self,
         is_prompt: bool,
-        prefill_ms: float,
-        decode_ms: float,
         scheduler_output: SchedulerOutput,
     ) -> None:
-        step_seconds = (prefill_ms if is_prompt else decode_ms) / 1000.0
+        step_seconds = (
+            envs_spyre.SENDNN_INFERENCE_SIM_PREFILL_MS
+            if is_prompt
+            else envs_spyre.SENDNN_INFERENCE_SIM_DECODE_MS
+        ) / 1000.0
         end_t = self.virtual_clock_seconds + step_seconds
         new_req_ids = [r.req_id for r in scheduler_output.scheduled_new_reqs]
         cached_req_ids = list(scheduler_output.scheduled_cached_reqs.req_ids)
@@ -223,7 +224,6 @@ class SimState:
                     rec.last_prefill_end = end_t
                 else:
                     rec.decode_step_ends.append(end_t)
-                rec.virtual_completion = end_t
 
             self.virtual_clock_seconds = end_t
 
@@ -261,8 +261,7 @@ class SimState:
             token_emit_times[i] - token_emit_times[i - 1] for i in range(1, num_generation_tokens)
         ]
 
-        completion = rec.virtual_completion if rec.virtual_completion is not None else last_token_t
-        e2e_latency = completion - rec.virtual_arrival
+        e2e_latency = last_token_t - rec.virtual_arrival
         # In sim mode the scheduler picks a request immediately when it arrives,
         # so there is no front-of-queue wait; report 0 for bench parity.
         queued_time = 0.0
@@ -279,7 +278,7 @@ class SimState:
             "num_prefill_chunks": rec.num_prefill_chunks,
             "num_decode_steps": len(rec.decode_step_ends),
             "virtual_arrival_seconds": rec.virtual_arrival,
-            "virtual_completion_seconds": completion,
+            "virtual_completion_seconds": last_token_t,
             "e2e_latency_seconds": e2e_latency,
             "queued_time_seconds": queued_time,
             "prefill_time_seconds": prefill_time,
@@ -333,8 +332,6 @@ class SimulatedChunkedPrefillModelRunner(ChunkedPrefillModelRunner):
     ) -> None:
         self._sim_state.record_step(
             is_prompt=model_input.is_prompt,
-            prefill_ms=envs_spyre.SENDNN_INFERENCE_SIM_PREFILL_MS,
-            decode_ms=envs_spyre.SENDNN_INFERENCE_SIM_DECODE_MS,
             scheduler_output=scheduler_output,
         )
 
