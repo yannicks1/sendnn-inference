@@ -221,9 +221,10 @@ class SpyreCausalLM(nn.Module):
             kwargs["rank"],
         ):
             if self.config.model_type == "granite_swa":
-                # Hack: Use explicit architecture: register() patches AutoConfig to show GraniteForCausalLM
-                # to vLLM (which doesn't yet support GraniteSWAForCausalLM). However, to FMS we pass
-                # granite_swa (which resolves to GraniteSWAForCausalLM)
+                # Use explicit architecture: SpyrePlatform.pre_register_and_update aliases
+                # GraniteSWAForCausalLM to GraniteForCausalLM in vLLM's ModelRegistry (vLLM has no
+                # GraniteSWA impl, and only needs the class for metadata). To FMS we pass
+                # granite_swa which resolves to GraniteSWAForCausalLM.
                 self.fms_model = get_model(
                     architecture="granite_swa",
                     variant=_granite_swa_variant_from_hf(self.config),

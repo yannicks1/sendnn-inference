@@ -42,25 +42,6 @@ __version__ = importlib.metadata.version("sendnn_inference")
 
 def register():
     """Register the Spyre platform."""
-    # vLLM doesn't know GraniteSWAForCausalLM, so remap it to GraniteForCausalLM.
-    # model_type stays "granite_swa" for routing. FMS loading bypasses this via explicit arch.
-    try:
-        from transformers import AutoConfig
-
-        if not getattr(AutoConfig.from_pretrained, "_sendnn_granite_swa_patched", False):
-            _orig = AutoConfig.from_pretrained
-
-            @classmethod  # type: ignore[misc]
-            def _patched(cls, path, *args, **kwargs):
-                result = _orig.__func__(cls, path, *args, **kwargs)
-                if getattr(result, "architectures", None) == ["GraniteSWAForCausalLM"]:
-                    result.architectures = ["GraniteForCausalLM"]
-                return result
-
-            _patched._sendnn_granite_swa_patched = True  # type: ignore[attr-defined]
-            AutoConfig.from_pretrained = _patched
-    except Exception:
-        pass
     return "sendnn_inference.platform.SpyrePlatform"
 
 
