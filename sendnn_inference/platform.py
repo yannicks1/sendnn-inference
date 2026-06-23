@@ -242,10 +242,12 @@ class SpyrePlatform(Platform):
         if not is_decoder and not is_pooling:
             raise ValueError("Only the 'generate' and 'pooling' runners are supported")
 
-        if vllm_config.load_config.load_format == "dummy" and model_config.is_multimodal_model:
+        if vllm_config.load_config.load_format == "dummy" and (
+            model_config.is_multimodal_model or is_pooling
+        ):
             raise ValueError(
-                "--load-format dummy is not supported for multimodal models; "
-                "random-weight init is currently only supported for text models."
+                "--load-format dummy is only supported for text generation models; "
+                "random-weight init is not implemented for multimodal or pooling models."
             )
 
         if parallel_config.worker_cls == "auto":
