@@ -149,6 +149,9 @@ class MockSpyreCausalLM:
 @dataclass
 class _RequestSimRecord:
     virtual_arrival: float
+    # Virtual clock at the start of the request's first prefill chunk: the sim
+    # analog of vLLM's scheduled_ts (when the request is first picked up).
+    first_prefill_start: float | None = None
     last_prefill_end: float | None = None
     decode_step_ends: list[float] = field(default_factory=list)
     num_prefill_chunks: int = 0
@@ -211,6 +214,9 @@ class SimState:
                 # prefill step runs; warmup steps are skipped before reaching here.
                 rec = self._records.get(req_ids[0])
                 assert rec is not None, f"Request {req_ids[0]} not found in records"
+                if rec.first_prefill_start is None:
+                    # Start of the first chunk == current clock (before this step).
+                    rec.first_prefill_start = self.virtual_clock_seconds
                 rec.num_prefill_chunks += 1
                 rec.last_prefill_end = end_t
                 self.virtual_clock_seconds = end_t
@@ -231,7 +237,6 @@ class SimState:
         req_id: str,
         num_prompt_tokens: int,
     ) -> None:
-        prefill_ms = envs_spyre.SENDNN_INFERENCE_SIM_PREFILL_MS
         with self._lock:
             rec = self._records.pop(req_id, None)
         if rec is None:
@@ -251,22 +256,29 @@ class SimState:
 
         first_token_t = token_emit_times[0]
         last_token_t = token_emit_times[-1]
+        # scheduled_ts analog: the first prefill chunk start. Always set here
+        # because a token was emitted, which requires at least one prefill chunk.
+        scheduled_t = rec.first_prefill_start
+        assert scheduled_t is not None, f"Request {req_id} emitted a token without a prefill"
+
         ttft = first_token_t - rec.virtual_arrival
         decode_time = last_token_t - first_token_t  # bench convention
-        prefill_time = rec.num_prefill_chunks * prefill_ms / 1000.0
 
         # ITLs between successive emitted tokens (size = num_generation_tokens - 1)
         itls = [
             token_emit_times[i] - token_emit_times[i - 1] for i in range(1, num_generation_tokens)
         ]
 
+        # Mirror vLLM's FinishedRequestStats decomposition (with scheduled_ts ==
+        # first_prefill_start) so that, per record, ttft == queued + prefill and
+        # e2e == queued + inference:
+        #   queued_time    = scheduled_ts - arrival   (wait before first prefill)
+        #   prefill_time   = first_token  - scheduled  (incl. interleaved steps)
+        #   inference_time = last_token   - scheduled
         e2e_latency = last_token_t - rec.virtual_arrival
-        # In sim mode the scheduler picks a request immediately when it arrives,
-        # so there is no front-of-queue wait; report 0 for bench parity.
-        queued_time = 0.0
-        # Inference time: bench defines it as last_token_ts - scheduled_ts.
-        # We approximate scheduled_ts as virtual_arrival.
-        inference_time = last_token_t - rec.virtual_arrival
+        queued_time = scheduled_t - rec.virtual_arrival
+        prefill_time = first_token_t - scheduled_t
+        inference_time = last_token_t - scheduled_t
         mean_tpot = decode_time / max(num_generation_tokens - 1, 1)
 
         record = {
