@@ -288,6 +288,8 @@ class SimState:
             "num_generation_tokens": num_generation_tokens,
             "num_prefill_chunks": rec.num_prefill_chunks,
             "num_decode_steps": len(rec.decode_step_ends),
+            "sim_prefill_ms": envs_spyre.SENDNN_INFERENCE_SIM_PREFILL_MS,
+            "sim_decode_ms": envs_spyre.SENDNN_INFERENCE_SIM_DECODE_MS,
             "virtual_arrival_seconds": rec.virtual_arrival,
             "virtual_completion_seconds": last_token_t,
             "e2e_latency_seconds": e2e_latency,
