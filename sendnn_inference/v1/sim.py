@@ -201,31 +201,35 @@ class SimState:
         is_prompt: bool,
         scheduler_output: SchedulerOutput,
     ) -> None:
-        step_seconds = (
-            envs_spyre.SENDNN_INFERENCE_SIM_PREFILL_MS
-            if is_prompt
-            else envs_spyre.SENDNN_INFERENCE_SIM_DECODE_MS
-        ) / 1000.0
-        end_t = self.virtual_clock_seconds + step_seconds
-        new_req_ids = [r.req_id for r in scheduler_output.scheduled_new_reqs]
-        cached_req_ids = list(scheduler_output.scheduled_cached_reqs.req_ids)
-
-        with self._lock:
-            for rid in new_req_ids + cached_req_ids:
-                rec = self._records.get(rid)
+        if is_prompt:
+            # PREFILL STEP
+            end_t = self.virtual_clock_seconds + envs_spyre.SENDNN_INFERENCE_SIM_PREFILL_MS / 1000.0
+            # newly-arrived requests (1st chunk) are in scheduled_new_reqs while continued
+            # prefill requests (subsequent chunks) are in scheduled_cached_reqs.
+            req_ids = [r.req_id for r in scheduler_output.scheduled_new_reqs] or list(
+                scheduler_output.scheduled_cached_reqs.req_ids
+            )
+            assert len(req_ids) == 1, "Expected exactly one request in prefill step."
+            with self._lock:
+                rec = self._records.get(req_ids[0])
                 if rec is None:
-                    # Most reqs already have a record (created on entry to the
-                    # scheduler via mark_arrival). This fallback covers
-                    # warmup-style synthetic reqs that bypass the scheduler.
+                    # This fallback covers warmup-style synthetic reqs that bypass the scheduler
                     rec = _RequestSimRecord(virtual_arrival=self.virtual_clock_seconds)
-                    self._records[rid] = rec
-                if is_prompt:
-                    rec.num_prefill_chunks += 1
-                    rec.last_prefill_end = end_t
-                else:
+                    self._records[req_ids[0]] = rec
+                rec.num_prefill_chunks += 1
+                rec.last_prefill_end = end_t
+                self.virtual_clock_seconds = end_t
+        else:
+            # DECODE STEP
+            end_t = self.virtual_clock_seconds + envs_spyre.SENDNN_INFERENCE_SIM_DECODE_MS / 1000.0
+            # All decode request are in scheduled_cached_reqs.
+            req_ids = list(scheduler_output.scheduled_cached_reqs.req_ids)
+            with self._lock:
+                for req_id in req_ids:
+                    rec = self._records.get(req_id)
+                    assert rec is not None, f"Request {req_id} not found in records"
                     rec.decode_step_ends.append(end_t)
-
-            self.virtual_clock_seconds = end_t
+                self.virtual_clock_seconds = end_t
 
     def finalize_and_write(
         self,
