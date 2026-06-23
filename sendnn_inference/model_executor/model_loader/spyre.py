@@ -189,16 +189,21 @@ class SpyreCausalLM(nn.Module):
                     self.dtype,
                 )
 
-        # `--load-format dummy` skips the checkpoint download and random-inits
-        # the model. The explicitly-routed granite_swa architecture achieves this
-        # via source=None; every other architecture routes through FMS's
-        # `hf_configured` path (fetches only config.json, then reset_parameters()).
-        load_dummy_weights = self.load_config.load_format == "dummy"
-
-        if load_dummy_weights:
-            logger.info("Loading model %s with random weights.", model_config.model)
+        # `--load-format dummy` skips the checkpoint download and routes through
+        # FMS's `hf_configured` path, which fetches only config.json and then
+        # random-inits the model via `reset_parameters()`.
+        variant: str | None = None
+        source: str | None = None
+        if self.load_config.load_format == "dummy":
+            logger.info(
+                "Loading model %s with random weights.",
+                model_config.model,
+            )
+            architecture = "hf_configured"
+            variant = model_config.model
             model_path: str | None = None
         else:
+            architecture = "hf_pretrained"
             is_local = os.path.isdir(model_config.model)
             model_path = model_config.model
             # Get location of model from HF cache.
@@ -210,6 +215,16 @@ class SpyreCausalLM(nn.Module):
                     revision=model_config.revision,
                 )
 
+        # granite_swa is not auto-detected by FMS's hf_pretrained/hf_configured
+        # inference, so route it through its explicitly-registered architecture.
+        # source="hf" converts the HF checkpoint; for dummy it stays None (with
+        # model_path=None) so FMS random-inits via `reset_parameters()`.
+        if self.config.model_type == "granite_swa":
+            architecture = "granite_swa"
+            variant = _granite_swa_variant_from_hf(self.config)
+            if self.load_config.load_format != "dummy":
+                source = "hf"
+
         # Get any fixes needed that must be patched into the kwargs;
         # currently this is only use for multimodal models / llava next
         model_kwargs = spyre_mm.get_mm_specific_load_overrides(self.config)
@@ -219,43 +234,17 @@ class SpyreCausalLM(nn.Module):
             kwargs["world_size"],
             kwargs["rank"],
         ):
-            if self.config.model_type == "granite_swa":
-                # Use explicit architecture: SpyrePlatform.pre_register_and_update aliases
-                # GraniteSWAForCausalLM to GraniteForCausalLM in vLLM's ModelRegistry (vLLM has no
-                # GraniteSWA impl, and only needs the class for metadata). To FMS we pass
-                # granite_swa which resolves to GraniteSWAForCausalLM. source=None random-inits.
-                self.fms_model = get_model(
-                    architecture="granite_swa",
-                    variant=_granite_swa_variant_from_hf(self.config),
-                    model_path=model_path,
-                    source=None if load_dummy_weights else "hf",
-                    distributed_strategy=distributed_strategy,
-                    group=dist.group.WORLD,
-                    fused_weights=False,
-                )
-            elif load_dummy_weights:
-                # General random-init path: FMS infers the model config from the
-                # HF id (variant) and random-inits via reset_parameters().
-                self.fms_model = get_model(
-                    architecture="hf_configured",
-                    variant=model_config.model,
-                    model_path=None,
-                    distributed_strategy=distributed_strategy,
-                    group=dist.group.WORLD,
-                    fused_weights=False,
-                    trust_remote_code=model_config.trust_remote_code,
-                    **model_kwargs,
-                )
-            else:
-                self.fms_model = get_model(
-                    architecture="hf_pretrained",
-                    model_path=model_path,
-                    distributed_strategy=distributed_strategy,
-                    group=dist.group.WORLD,
-                    fused_weights=False,
-                    trust_remote_code=model_config.trust_remote_code,
-                    **model_kwargs,
-                )
+            self.fms_model = get_model(
+                architecture=architecture,
+                variant=variant,
+                model_path=model_path,
+                source=source,
+                distributed_strategy=distributed_strategy,
+                group=dist.group.WORLD,
+                fused_weights=False,
+                trust_remote_code=model_config.trust_remote_code,
+                **model_kwargs,
+            )
 
         self.fms_model.eval()
         torch.set_grad_enabled(False)
