@@ -542,7 +542,7 @@ class SpyrePlatform(Platform):
     @classmethod
     def pre_register_and_update(cls, parser: FlexibleArgumentParser | None = None) -> None:
         # vLLM has no GraniteSWAForCausalLM architecture. FMS loads the real weights
-        # via the explicit "granite_swa" path (model_loader/spyre.py); vLLM only needs
+        # via the hf_pretrained path (model_loader/spyre.py); vLLM only needs
         # a class for metadata (runner_type, defaults), so alias it to GraniteForCausalLM.
         from vllm import ModelRegistry
 
@@ -551,6 +551,14 @@ class SpyrePlatform(Platform):
                 "GraniteSWAForCausalLM",
                 "vllm.model_executor.models.granite:GraniteForCausalLM",
             )
+
+        # Importing fms.models.hf registers the granite_swa model_type with
+        # transformers AutoConfig. This must run before vLLM's frontend parses
+        # config.json (in ModelConfig) so a granite_swa checkpoint loads without a
+        # granite_swa implementation in transformers. Done here (not in
+        # sendnn_inference/__init__.py, which deliberately avoids importing torch
+        # early); pre_register_and_update runs before ModelConfig is built.
+        import fms.models.hf  # noqa: F401
 
         if parser is None:
             return
