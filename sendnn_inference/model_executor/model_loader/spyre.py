@@ -178,7 +178,13 @@ class SpyreCausalLM(nn.Module):
             self.parallel_config
         )
 
-        if self.config.model_type in {"llama", "granite", "granitemoehybrid", "qwen3"}:
+        if self.config.model_type in {
+            "llama",
+            "granite",
+            "granitemoehybrid",
+            "qwen3",
+            "granite_swa",
+        }:
             self.kv_cache_specs["num_layers"] = self.config.num_hidden_layers
             self.kv_cache_specs["head_dim"] = getattr(
                 self.fms_model.config,
@@ -237,6 +243,7 @@ class SpyreCausalLM(nn.Module):
         # FMS's `hf_configured` path, which fetches only config.json and then
         # random-inits the model via `reset_parameters()`.
         variant: str | None = None
+        source: str | None = None
         if self.load_config.load_format == "dummy":
             logger.info(
                 "Loading model %s with random weights.",
@@ -271,6 +278,7 @@ class SpyreCausalLM(nn.Module):
                 architecture=architecture,
                 variant=variant,
                 model_path=model_path,
+                source=source,
                 distributed_strategy=distributed_strategy,
                 group=dist.group.WORLD,
                 fused_weights=False,
