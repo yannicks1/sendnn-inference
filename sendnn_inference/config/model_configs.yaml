@@ -290,6 +290,7 @@ models:
         device_config: *granite_41_30b_tp4_device_config
 
   # Granite SWA 20B (prerelease)
+  # TODO (ysc) update with real hf id once the model is public
   ibm-granite/swa-20b:
     architecture: *granite_swa_20b_architecture
     continuous_batching_configs:
