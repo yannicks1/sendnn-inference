@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import math
+import os
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -273,6 +274,27 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         self._mm_encoding_submitted: set[str] = set()
         self._mm_encoding_ready: set[str] = set()
         self.max_batch_tkv_limit = SpyrePlatform.get_max_batch_tkv_limit()
+
+        # LOCAL MEASUREMENT HACK — DO NOT MERGE.
+        # The scheduler enforces VLLM_DT_MAX_BATCH_TKV_LIMIT (default 131072) as a
+        # hard volumetric cap (batch_size * tkv), used both to gate admission
+        # (check_batch_tkv_limit_cp) and to pause/resume decode requests
+        # (_can_decode_all_requests). The compiler makes 4 undocumented exceptions
+        # and can actually compile a handful of DPP programs whose bs*prompt_len
+        # exceeds this cap (ids 24, 25, 26, 29 for criteria_32k). On the stock
+        # scheduler those runs pause+resume requests, contaminating the
+        # "all prefills first, then decode" bench metrics (idle/queued/TTFT).
+        # Setting SENDNN_INFERENCE_DISABLE_TKV_LIMIT=1 raises the cap to +inf so
+        # the full batch is scheduled in one go. Safe ONLY when you control the
+        # workload and know the compiler accepts these shapes; it WILL let
+        # oversized batches through and crash on hardware otherwise. Never ship.
+        if os.environ.get("SENDNN_INFERENCE_DISABLE_TKV_LIMIT", "0") == "1":
+            logger.warning(
+                "SENDNN_INFERENCE_DISABLE_TKV_LIMIT=1: ignoring the batch TKV "
+                "volumetric cap (was %d). Measurement hack — not for production.",
+                self.max_batch_tkv_limit,
+            )
+            self.max_batch_tkv_limit = float("inf")
 
         self._bench: SpyreBenchState | None = None
 
