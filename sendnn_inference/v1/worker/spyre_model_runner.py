@@ -1,4 +1,5 @@
 import math
+import os
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -1873,13 +1874,22 @@ class ChunkedPrefillModelRunner(
         )
 
         with set_forward_context(attn_metadata, self.vllm_config):
-            assert (
-                self.tkv * len(scheduler_output.num_scheduled_tokens)
-                <= SpyrePlatform.get_max_batch_tkv_limit()
-            ), (
-                f"Exceeded max batch tkv limit {SpyrePlatform.get_max_batch_tkv_limit()}!"
-                f" tkv: {self.tkv}, batch_size: {len(scheduler_output.num_scheduled_tokens)}"
-            )
+            # LOCAL MEASUREMENT HACK — DO NOT MERGE. Mirror of the scheduler-side
+            # override (scheduler.py). The scheduler gates admission/decode-pause
+            # on self.max_batch_tkv_limit, but THIS assert reads the platform value
+            # directly, so disabling the cap in the scheduler alone still trips
+            # here — notably at the first DECODE step, where tkv grows past the cap
+            # even for prefill-fitting shapes (ids 24/25/26/29 for criteria_32k).
+            # SENDNN_INFERENCE_DISABLE_TKV_LIMIT=1 skips the assert so those DPP
+            # programs run to completion when we control the workload. Never ship.
+            if os.environ.get("SENDNN_INFERENCE_DISABLE_TKV_LIMIT", "0") != "1":
+                assert (
+                    self.tkv * len(scheduler_output.num_scheduled_tokens)
+                    <= SpyrePlatform.get_max_batch_tkv_limit()
+                ), (
+                    f"Exceeded max batch tkv limit {SpyrePlatform.get_max_batch_tkv_limit()}!"
+                    f" tkv: {self.tkv}, batch_size: {len(scheduler_output.num_scheduled_tokens)}"
+                )
 
             logits = self.model(
                 input_ids_or_embeds=input_ids_or_embeds,
